@@ -570,6 +570,50 @@ def make_vasp_relax(jdata, mdata):
         task_format={"fp": "sys-*"},
     )
 
+def make_rescuplus_relax(jdata, mdata):
+    out_dir = jdata["out_dir"]
+    potcars = jdata["potcars"]
+    cwd = os.getcwd()
+    work_dir = os.path.join(out_dir, global_dirname_02)
+    assert os.path.isdir(work_dir)
+    work_dir = os.path.abspath(work_dir)
+
+    if os.path.isfile(os.path.join(work_dir, "calc.py")):
+        os.remove(os.path.join(work_dir, "calc.py"))
+    shutil.copy2(jdata["relax_incar"], os.path.join(work_dir, "calc.py"))
+    for potcar in potcars:
+        potcar_ = potcar.split("/")[-1]
+        if os.path.isfile(os.path.join(work_dir, potcar_)):
+            os.remove(os.path.join(work_dir, potcar_))
+        shutil.copy2(potcar, os.path.join(work_dir, potcar_))
+
+    os.chdir(work_dir)
+
+    sys_list = glob.glob("sys-*")
+    for ss in sys_list:
+        os.chdir(ss)
+        ln_src = os.path.relpath(os.path.join(work_dir, "calc.py"))
+        try:
+            os.symlink(ln_src, "calc.py")
+        except FileExistsError:
+            pass
+        for potcar in potcars:
+            potcar_ = potcar.split("/")[-1]
+            ln_src = os.path.relpath(os.path.join(work_dir, potcar_))
+            try:
+                os.symlink(ln_src, potcar_)
+            except FileExistsError:
+                pass
+
+        os.chdir(work_dir)
+    os.chdir(cwd)
+    symlink_user_forward_files(
+        mdata=mdata,
+        task_type="fp",
+        work_path=os.path.join(os.path.basename(out_dir), global_dirname_02),
+        task_format={"fp": "sys-*"},
+    )
+
 
 def make_abacus_relax(jdata, mdata):
     relax_incar = jdata["relax_incar"]
@@ -686,6 +730,41 @@ def make_scale(jdata):
             poscar_scale(pos_src, "POSCAR", jj)
             os.chdir(cwd)
 
+def make_scale_rescuplus(jdata):
+    out_dir = jdata["out_dir"]
+    scale = jdata["scale"]
+    skip_relax = jdata["skip_relax"]
+
+    cwd = os.getcwd()
+    init_path = os.path.join(out_dir, global_dirname_02)
+    init_path = os.path.abspath(init_path)
+    work_path = os.path.join(out_dir, global_dirname_03)
+    os.chdir(init_path)
+    init_sys = glob.glob("sys-*")
+    init_sys.sort()
+    os.chdir(cwd)
+
+    create_path(work_path)
+    for ii in init_sys:
+        if not skip_relax:
+            from ase.io import Trajectory
+            Trajectory(os.path.join(os.path.join(init_path, ii), "nano_rlx.traj"))[-1].write(os.path.join(os.path.join(init_path, ii), "CONTCAR"), format="vasp")
+        for jj in scale:
+            if skip_relax:
+                pos_src = os.path.join(os.path.join(init_path, ii), "POSCAR")
+            else:
+                pos_src = os.path.join(os.path.join(init_path, ii), "CONTCAR")
+            if not os.path.isfile(pos_src):
+                raise RuntimeError(
+                    f"file {pos_src} not found, vasp relaxation should be run before scale poscar"
+                )
+            scale_path = os.path.join(work_path, ii)
+            scale_path = os.path.join(scale_path, f"scale-{jj:.3f}")
+            create_path(scale_path)
+            os.chdir(scale_path)
+            poscar_scale(pos_src, "POSCAR", jj)
+            os.chdir(cwd)
+
 
 def make_scale_ABACUS(jdata):
     out_dir = jdata["out_dir"]
@@ -763,6 +842,10 @@ def pert_scaled(jdata):
     elif init_fp_style == "ABACUS":
         fp_style = "abacus"
         poscar_name = "STRU"
+    elif init_fp_style == "RESCU+":
+        fp_style = "vasp"
+        poscar_name = "POSCAR"
+
 
     python_exec = os.path.join(
         os.path.dirname(__file__), "tools", "create_random_disturb.py"
@@ -912,6 +995,69 @@ def make_vasp_md(jdata, mdata):
         task_format={"fp": "sys-*/scale*/00*"},
     )
 
+def make_rescuplus_md(jdata, mdata):
+    md_incar = jdata["md_incar"]
+
+    out_dir = jdata["out_dir"]
+    scale = jdata["scale"]
+    pert_numb = jdata["pert_numb"]
+
+    cwd = os.getcwd()
+    path_ps = os.path.join(out_dir, global_dirname_03)
+    path_ps = os.path.abspath(path_ps)
+    assert os.path.isdir(path_ps)
+    os.chdir(path_ps)
+    sys_ps = glob.glob("sys-*")
+    sys_ps.sort()
+    os.chdir(cwd)
+    path_md = os.path.join(out_dir, global_dirname_04)
+    path_md = os.path.abspath(path_md)
+    create_path(path_md)
+    shutil.copy2(jdata["md_incar"], os.path.join(path_md, "calc.py"))
+
+    for pp_file in jdata["potcars"]:
+        shutil.copy2(pp_file, os.path.join(path_md, os.path.basename(pp_file)))
+    os.chdir(path_md)
+    os.chdir(cwd)
+
+    for ii in sys_ps:
+        for jj in scale:
+            for kk in range(pert_numb + 1):
+                path_work = path_md
+                path_work = os.path.join(path_work, ii)
+                path_work = os.path.join(path_work, f"scale-{jj:.3f}")
+                path_work = os.path.join(path_work, "%06d" % kk)  # noqa: UP031
+                create_path(path_work)
+                os.chdir(path_work)
+                path_pos = path_ps
+                path_pos = os.path.join(path_pos, ii)
+                path_pos = os.path.join(path_pos, f"scale-{jj:.3f}")
+                path_pos = os.path.join(path_pos, "%06d" % kk)  # noqa: UP031
+                init_pos = os.path.join(path_pos, "POSCAR")
+
+                shutil.copy2(init_pos, "POSCAR")
+                file_incar = os.path.join(path_md, "calc.py")
+                try:
+                    os.symlink(os.path.relpath(file_incar), "calc.py")
+                except FileExistsError:
+                    pass
+                try:
+                    for pp_file in [os.path.basename(a) for a in jdata["potcars"]]:
+                        os.symlink(
+                            os.path.relpath(os.path.join(path_md, pp_file)), pp_file
+                        )
+                except FileExistsError:
+                    pass
+
+                os.chdir(cwd)
+
+    symlink_user_forward_files(
+        mdata=mdata,
+        task_type="fp",
+        work_path=os.path.join(os.path.basename(out_dir), global_dirname_04),
+        task_format={"fp": "sys-*/scale*/00*"},
+    )
+
 
 def make_abacus_md(jdata, mdata):
     md_incar = jdata["md_incar"]
@@ -1050,6 +1196,76 @@ def make_abacus_md(jdata, mdata):
         task_format={"fp": "sys-*/scale*/00*"},
     )
 
+
+def coll_rescuplus_md(jdata):
+    from ase.io import Trajectory
+    out_dir = jdata["out_dir"]
+    md_nstep = jdata["md_nstep"]
+    scale = jdata["scale"]
+    pert_numb = jdata["pert_numb"]
+    coll_ndata = jdata["coll_ndata"]
+
+    cwd = os.getcwd()
+    path_md = os.path.join(out_dir, global_dirname_04)
+    path_md = os.path.abspath(path_md)
+    assert os.path.isdir(path_md), "md path should exists"
+    os.chdir(path_md)
+    sys_md = glob.glob("sys-*")
+    sys_md.sort()
+
+    for ii in sys_md:
+        os.chdir(ii)
+        # convert outcars
+        valid_outcars = []
+        for jj in scale:
+            for kk in range(pert_numb+1):
+                path_work = os.path.join(f"scale-{jj:.3f}", "%06d" % kk)  # noqa: UP031
+                outcar = os.path.join(path_work, "nano_nvt.traj")
+                # dlog.info("OUTCAR",outcar)
+                if os.path.isfile(outcar):
+                    # dlog.info("*"*40)
+                    nforce = len(Trajectory(outcar))
+                    # dlog.info("nforce is", nforce)
+                    # dlog.info("md_nstep", md_nstep)
+                    if nforce == md_nstep:
+                        valid_outcars.append(path_work)
+                    elif md_nstep == 0 and nforce == 1:
+                        valid_outcars.append(path_work)
+                    else:
+                        dlog.info(
+                            f"WARNING : in directory {os.getcwd()} nframe is not equal to settings in calc.py, ignored"
+                        )
+        arg_cvt = " "
+        if len(valid_outcars) == 0:
+            raise RuntimeError(
+                f"MD dir: {path_md}: find no valid outcar in sys {ii}, "
+                "check if your vasp md simulation is correctly done"
+            )
+
+        flag = True
+        if ("type_map" in jdata) and isinstance(jdata["type_map"], list):
+            type_map = jdata["type_map"]
+        else:
+            type_map = None
+        for oo in valid_outcars:
+            if flag:
+                _sys = dpdata.LabeledSystem(oo, type_map=type_map, fmt="rescuplus/md")
+                if len(_sys) > 0:
+                    all_sys = _sys
+                    flag = False
+                else:
+                    pass
+            else:
+                _sys = dpdata.LabeledSystem(oo, type_map=type_map, fmt="rescuplus/md")
+                if len(_sys) > 0:
+                    all_sys.append(_sys)
+        # create deepmd data
+        if all_sys.get_nframes() >= coll_ndata:
+            all_sys = all_sys.sub_system(np.arange(coll_ndata))
+        all_sys.to_deepmd_raw("deepmd")
+        all_sys.to_deepmd_npy("deepmd", set_size=all_sys.get_nframes())
+        os.chdir(path_md)
+    os.chdir(cwd)
 
 def coll_vasp_md(jdata):
     out_dir = jdata["out_dir"]
@@ -1256,6 +1472,55 @@ def coll_abacus_md(jdata):
         os.chdir(path_md)
     os.chdir(cwd)
 
+def run_rescuplus_relax(jdata, mdata):
+    fp_command = mdata["fp_command"]
+    fp_group_size = mdata["fp_group_size"]
+    fp_resources = mdata["fp_resources"]
+    # machine_type = mdata['fp_machine']['machine_type']
+    work_dir = os.path.join(jdata["out_dir"], global_dirname_02)
+    pp_files = [os.path.basename(a) for a in jdata["potcars"]]
+
+
+    relax_incar = jdata["relax_incar"]
+    forward_files = ["POSCAR", "calc.py"]
+
+    forward_files += pp_files
+    user_forward_files = mdata.get("fp" + "_user_forward_files", [])
+    forward_files += [os.path.basename(file) for file in user_forward_files]
+    backward_files = ["nano_rlx_out.json", "nano_rlx_out.h5", "nano_rlx_log.out", "resculog.out", "nano_rlx.traj"]
+    backward_files += mdata.get("fp" + "_user_backward_files", [])
+    forward_common_files = []
+    relax_tasks = glob.glob(os.path.join(work_dir, "sys-*"))
+    relax_tasks.sort()
+    # dlog.info("work_dir",work_dir)
+    # dlog.info("relax_tasks",relax_tasks)
+    if len(relax_tasks) == 0:
+        return
+
+    relax_run_tasks = relax_tasks
+    # for ii in relax_tasks :
+    #    if not _vasp_check_fin(ii):
+    #        relax_run_tasks.append(ii)
+    run_tasks = [os.path.basename(ii) for ii in relax_run_tasks]
+
+    ### Submit jobs
+    check_api_version(mdata)
+
+    submission = make_submission(
+        mdata["fp_machine"],
+        mdata["fp_resources"],
+        commands=[fp_command],
+        work_path=work_dir,
+        run_tasks=run_tasks,
+        group_size=fp_group_size,
+        forward_common_files=forward_common_files,
+        forward_files=forward_files,
+        backward_files=backward_files,
+        outlog="fp.log",
+        errlog="fp.log",
+    )
+    submission.run_submission()
+
 
 def run_abacus_relax(jdata, mdata):
     fp_command = mdata["fp_command"]
@@ -1376,6 +1641,62 @@ def run_vasp_md(jdata, mdata):
     submission.run_submission()
 
 
+def run_rescuplus_md(jdata, mdata):
+    fp_command = mdata["fp_command"]
+    fp_group_size = mdata["fp_group_size"]
+    # machine_type = mdata['fp_machine']['machine_type']
+    work_dir = os.path.join(jdata["out_dir"], global_dirname_04)
+
+    md_incar = jdata["md_incar"]
+    standard_incar = get_abacus_input_parameters(
+        md_incar
+    )  # a dictionary in which all of the values are strings
+    forward_files = ["POSCAR", "calc.py"]
+    for pp_file in [os.path.basename(a) for a in jdata["potcars"]]:
+        forward_files.append(pp_file)
+    user_forward_files = mdata.get("fp" + "_user_forward_files", [])
+    forward_files += [os.path.basename(file) for file in user_forward_files]
+    backward_files = ["nano_nvt_out.json", "nano_nvt_out.h5", "nano_nvt_log.out", "resculog.out", "nano_nvt.traj"]
+    backward_files += mdata.get("fp" + "_user_backward_files", [])
+    forward_common_files = []
+
+    path_md = work_dir
+    path_md = os.path.abspath(path_md)
+    cwd = os.getcwd()
+    assert os.path.isdir(path_md), "md path should exists"
+    md_tasks = glob.glob(os.path.join(work_dir, "sys-*/scale*/00*"))
+    md_tasks.sort()
+
+    if len(md_tasks) == 0:
+        return
+
+    md_run_tasks = md_tasks
+    # for ii in md_tasks :
+    #    if not _vasp_check_fin(ii):
+    #        md_run_tasks.append(ii)
+
+    run_tasks = [ii.replace(work_dir + "/", "") for ii in md_run_tasks]
+    # dlog.info("md_work_dir", work_dir)
+    # dlog.info("run_tasks",run_tasks)
+
+    ### Submit jobs
+    check_api_version(mdata)
+
+    submission = make_submission(
+        mdata["fp_machine"],
+        mdata["fp_resources"],
+        commands=[fp_command],
+        work_path=work_dir,
+        run_tasks=run_tasks,
+        group_size=fp_group_size,
+        forward_common_files=forward_common_files,
+        forward_files=forward_files,
+        backward_files=backward_files,
+        outlog="fp.log",
+        errlog="fp.log",
+    )
+    submission.run_submission()
+
 def run_abacus_md(jdata, mdata):
     fp_command = mdata["fp_command"]
     fp_group_size = mdata["fp_group_size"]
@@ -1488,6 +1809,8 @@ def gen_init_bulk(args):
                 if "md_nstep" in standard_incar:
                     nsw_flag = True
                     nsw_steps = int(standard_incar["md_nstep"])
+            elif jdata["init_fp_style"] == "RESCU+":
+                nsw_flag = False # we assert both step are consistent
             if nsw_flag:
                 if nsw_steps != md_nstep_jdata:
                     dlog.info(
@@ -1518,6 +1841,8 @@ def gen_init_bulk(args):
                     make_super_cell_poscar(jdata)
                 elif jdata["init_fp_style"] == "ABACUS":
                     make_super_cell_STRU(jdata)
+                elif jdata["init_fp_style"] == "RESCU+":
+                    make_super_cell_poscar(jdata)
             else:
                 if jdata["init_fp_style"] == "VASP":
                     make_unit_cell(jdata)
@@ -1527,6 +1852,11 @@ def gen_init_bulk(args):
                     stru_data = make_unit_cell_ABACUS(jdata)
                     supercell_stru = make_super_cell_ABACUS(jdata, stru_data)
                     place_element_ABACUS(jdata, supercell_stru)
+                elif jdata["init_fp_style"] == "RESCU+": # hack vasp style structure and read it with ase script
+                    make_unit_cell(jdata)
+                    make_super_cell(jdata)
+                    place_element(jdata)
+
             if args.MACHINE is not None:
                 if jdata["init_fp_style"] == "VASP":
                     make_vasp_relax(jdata, mdata)
@@ -1534,11 +1864,18 @@ def gen_init_bulk(args):
                 elif jdata["init_fp_style"] == "ABACUS":
                     make_abacus_relax(jdata, mdata)
                     run_abacus_relax(jdata, mdata)
+                elif jdata["init_fp_style"] == "RESCU+":
+                    make_rescuplus_relax(jdata, mdata)
+                    run_rescuplus_relax(jdata, mdata)
+
             else:
                 if jdata["init_fp_style"] == "VASP":
                     make_vasp_relax(jdata, {"fp_resources": {}})
                 elif jdata["init_fp_style"] == "ABACUS":
                     make_abacus_relax(jdata, {"fp_resources": {}})
+                elif jdata["init_fp_style"] == "RESCU+":
+                    make_rescuplus_relax(jdata, {"fp_resources": {}})
+
         elif stage == 2:
             dlog.info("Current stage is 2, perturb and scale")
             if jdata["init_fp_style"] == "VASP":
@@ -1546,6 +1883,9 @@ def gen_init_bulk(args):
                 pert_scaled(jdata)
             elif jdata["init_fp_style"] == "ABACUS":
                 make_scale_ABACUS(jdata)
+                pert_scaled(jdata)
+            elif jdata["init_fp_style"] == "RESCU+":
+                make_scale_rescuplus(jdata)
                 pert_scaled(jdata)
         elif stage == 3:
             dlog.info("Current stage is 3, run a short md")
@@ -1556,11 +1896,16 @@ def gen_init_bulk(args):
                 elif jdata["init_fp_style"] == "ABACUS":
                     make_abacus_md(jdata, mdata)
                     run_abacus_md(jdata, mdata)
+                elif jdata["init_fp_style"] == "RESCU+":
+                    make_rescuplus_md(jdata, mdata)
+                    run_rescuplus_md(jdata, mdata)
             else:
                 if jdata["init_fp_style"] == "VASP":
                     make_vasp_md(jdata, {"fp_resources": {}})
                 elif jdata["init_fp_style"] == "ABACUS":
                     make_abacus_md(jdata, {"fp_resources": {}})
+                elif jdata["init_fp_style"] == "RESCU+":
+                    make_rescuplus_md(jdata, {"fp_resources": {}})
 
         elif stage == 4:
             dlog.info("Current stage is 4, collect data")
@@ -1568,6 +1913,8 @@ def gen_init_bulk(args):
                 coll_vasp_md(jdata)
             elif jdata["init_fp_style"] == "ABACUS":
                 coll_abacus_md(jdata)
+            elif jdata["init_fp_style"] == "RESCU+":
+                coll_rescuplus_md(jdata)
         else:
             raise RuntimeError("unknown stage %d" % stage)  # noqa: UP031
 

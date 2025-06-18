@@ -39,6 +39,9 @@ def init_reaction_mdata_arginfo() -> Argument:
 def init_bulk_vasp_args() -> list[Argument]:
     return []
 
+def init_bulk_rescuplus_args() -> list[Argument]:
+    return []
+
 
 def init_bulk_abacus_args() -> list[Argument]:
     doc_relax_kpt = 'Path of `KPT` file for relaxation in stage 1. Only useful if `init_fp_style` is "ABACUS".'
@@ -64,6 +67,7 @@ def init_bulk_variant_type_args() -> list[Variant]:
                     doc="No more parameters is needed to be added.",
                 ),
                 Argument("ABACUS", dict, init_bulk_abacus_args(), doc="ABACUS"),
+                Argument("RESCU+", dict, init_bulk_rescuplus_args(), doc="No more parameters is needed to be added.")
             ],
             default_tag="VASP",
             optional=True,

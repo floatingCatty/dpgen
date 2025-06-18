@@ -11,6 +11,7 @@ from dpgen.generator.arginfo import (
     fp_style_pwscf_args,
     fp_style_siesta_args,
     fp_style_vasp_args,
+    fp_style_rescuplus_args,
     training_args,
     training_args_common,
 )
@@ -134,6 +135,7 @@ def fp_style_variant_type_args() -> Variant:
             Argument("siesta", dict, fp_style_siesta_args()),
             Argument("cp2k", dict, fp_style_cp2k_args()),
             Argument("abacus", dict, fp_style_abacus_args()),
+            Argument("abacus", dict, fp_style_rescuplus_args()),
             # TODO: not supported yet, as it requires model_devi_engine to be amber
             # Argument(
             #     "amber/diff", dict, fp_style_amber_diff_args(), doc=doc_amber_diff

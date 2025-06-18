@@ -3131,6 +3131,23 @@ def make_fp_vasp_incar(iter_index, jdata, nbands_esti=None):
                 )
         os.chdir(cwd)
 
+def make_fp_rescuplus_incar(iter_index, jdata, nbands_esti=None):
+    iter_name = make_iter_name(iter_index)
+    work_path = os.path.join(iter_name, fp_name)
+    fp_tasks = glob.glob(os.path.join(work_path, "task.*"))
+    fp_tasks.sort()
+    if len(fp_tasks) == 0:
+        return
+    cwd = os.getcwd()
+    for ii in fp_tasks:
+        os.chdir(ii)
+        fp_incar_path = jdata["fp_incar"]
+        assert os.path.exists(fp_incar_path)
+        fp_incar_path = os.path.abspath(fp_incar_path)
+        with open("calc.py", "w") as fp:
+            fp.write(open(fp_incar_path, "r").read() + "\n")
+            
+        os.chdir(cwd)
 
 def _make_fp_pwmat_input(iter_index, jdata):
     iter_name = make_iter_name(iter_index)
@@ -3239,6 +3256,44 @@ def _link_fp_vasp_pp(iter_index, jdata):
             pp_file = os.path.join(fp_pp_path, jj)
             os.symlink(pp_file, jj)
         os.chdir(cwd)
+
+def sys_link_fp_rescuplus_pp(iter_index, jdata):
+    fp_pp_path = jdata["fp_pp_path"]
+    fp_pp_files = jdata["fp_pp_files"]
+    fp_pp_path = os.path.abspath(fp_pp_path)
+    type_map = jdata["type_map"]
+    assert os.path.exists(fp_pp_path)
+    assert len(fp_pp_files) == len(type_map), (
+        "size of fp_pp_files should be the same as the size of type_map"
+    )
+
+    iter_name = make_iter_name(iter_index)
+    work_path = os.path.join(iter_name, fp_name)
+
+    fp_tasks = glob.glob(os.path.join(work_path, "task.*"))
+    fp_tasks.sort()
+    if len(fp_tasks) == 0:
+        return
+
+    system_idx_str = [os.path.basename(ii).split(".")[1] for ii in fp_tasks]
+    system_idx_str = list(set(system_idx_str))
+    system_idx_str.sort()
+    for ii in system_idx_str:
+        potcars = []
+        sys_tasks = glob.glob(os.path.join(work_path, f"task.{ii}.*"))
+        assert len(sys_tasks) != 0
+        sys_poscar = os.path.join(sys_tasks[0], "POSCAR")
+        sys = dpdata.System(sys_poscar, fmt="vasp/poscar")
+        for ele_name in sys["atom_names"]:
+            ele_idx = jdata["type_map"].index(ele_name)
+            potcars.append(fp_pp_files[ele_idx])
+
+        cwd = os.getcwd()
+        for jj in sys_tasks:
+            os.chdir(jj)
+            for potcar in potcars:
+                os.symlink(os.path.join(fp_pp_path, potcar), potcar)
+            os.chdir(cwd)
 
 
 def sys_link_fp_vasp_pp(iter_index, jdata):
@@ -3442,6 +3497,16 @@ def make_fp_vasp(iter_index, jdata):
     make_fp_vasp_kp(iter_index, jdata)
     # 4, copy cvasp
     make_fp_vasp_cp_cvasp(iter_index, jdata)
+
+def make_fp_rescuplus(iter_index, jdata):
+    # abs path for fp_incar if it exists
+    if "fp_incar" in jdata:
+        jdata["fp_incar"] = os.path.abspath(jdata["fp_incar"])
+    # order is critical!
+    # 1, create potcar
+    sys_link_fp_rescuplus_pp(iter_index, jdata)
+    # 2, create incar
+    make_fp_rescuplus_incar(iter_index, jdata)
 
 
 def make_fp_pwscf(iter_index, jdata):
@@ -3856,6 +3921,8 @@ def make_fp_calculation(iter_index, jdata, mdata):
         make_fp_pwmat(iter_index, jdata)
     elif fp_style == "amber/diff":
         make_fp_amber_diff(iter_index, jdata)
+    elif fp_style == "rescuplus":
+        make_fp_rescuplus(iter_index, jdata)
     elif fp_style == "custom":
         make_fp_custom(iter_index, jdata)
     else:
@@ -3896,6 +3963,19 @@ def _abacus_scf_check_fin(ii):
             content = fp.read()
             count = content.count("!FINAL_ETOT_IS")
             if count != 1:
+                return False
+    else:
+        return False
+    return True
+
+
+def _rescuplus_scf_check_fin(ii):
+    import json
+    if os.path.isfile(os.path.join(ii, "nano_scf_out.json")):
+        with open(os.path.join(ii, "nano_scf_out.json")) as fp:
+            content = json.load(fp)
+            converged = content["solver"]["mix"]["converged"]
+            if converged != 1:
                 return False
     else:
         return False
@@ -4065,6 +4145,18 @@ def run_fp(iter_index, jdata, mdata):
             backward_files,
             _qe_check_fin,
             log_file="output",
+        )
+    elif fp_style == "rescuplus":
+        forward_files = ["calc.py", "POSCAR"] + fp_pp_files
+        backward_files = ["nano_scf_out.h5", "nano_scf_out.json", "fp.log"]
+        run_fp_inner(
+            iter_index,
+            jdata,
+            mdata,
+            forward_files,
+            backward_files,
+            _rescuplus_scf_check_fin,
+            log_file="fp.log",
         )
     elif fp_style == "abacus":
         fp_params = {}
@@ -4356,6 +4448,47 @@ def post_fp_pwscf(iter_index, jdata):
         all_sys.to_deepmd_raw(sys_data_path)
         all_sys.to_deepmd_npy(sys_data_path, set_size=len(sys_output))
 
+def post_fp_rescuplus_scf(iter_index, jdata):
+    model_devi_jobs = jdata["model_devi_jobs"]
+    assert iter_index < len(model_devi_jobs)
+
+    iter_name = make_iter_name(iter_index)
+    work_path = os.path.join(iter_name, fp_name)
+    fp_tasks = glob.glob(os.path.join(work_path, "task.*"))
+    fp_tasks.sort()
+    if len(fp_tasks) == 0:
+        return
+
+    system_index = []
+    for ii in fp_tasks:
+        system_index.append(os.path.basename(ii).split(".")[1])
+    system_index.sort()
+    set_tmp = set(system_index)
+    system_index = list(set_tmp)
+    system_index.sort()
+
+    cwd = os.getcwd()
+    for ss in system_index:
+        sys_output = glob.glob(os.path.join(work_path, f"task.{ss}.*"))
+        sys_input = glob.glob(os.path.join(work_path, f"task.{ss}.*/calc.py"))
+        sys_output.sort()
+        sys_input.sort()
+
+        all_sys = None
+        for ii, oo in zip(sys_input, sys_output):
+            _sys = dpdata.LabeledSystem(
+                oo, fmt="rescuplus/scf", type_map=jdata["type_map"]
+            )
+            if len(_sys) > 0:
+                if all_sys is None:
+                    all_sys = _sys
+                else:
+                    all_sys.append(_sys)
+
+        if all_sys is not None:
+            sys_data_path = os.path.join(work_path, f"data.{ss}")
+            all_sys.to_deepmd_raw(sys_data_path)
+            all_sys.to_deepmd_npy(sys_data_path, set_size=len(sys_output))
 
 def post_fp_abacus_scf(iter_index, jdata):
     model_devi_jobs = jdata["model_devi_jobs"]
@@ -4695,6 +4828,8 @@ def post_fp(iter_index, jdata):
         post_fp_pwmat(iter_index, jdata)
     elif fp_style == "amber/diff":
         post_fp_amber_diff(iter_index, jdata)
+    elif fp_style == "rescuplus":
+        post_fp_rescuplus_scf(iter_index, jdata)
     elif fp_style == "custom":
         post_fp_custom(iter_index, jdata)
     else:
@@ -4814,7 +4949,6 @@ def run_iter(param_file, machine_file):
             elif jj == 4:
                 log_iter("run_model_devi", ii, jj)
                 run_model_devi(ii, jdata, mdata)
-
             elif jj == 5:
                 log_iter("post_model_devi", ii, jj)
                 post_model_devi(ii, jdata, mdata)

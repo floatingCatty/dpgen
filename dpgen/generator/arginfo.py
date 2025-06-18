@@ -662,6 +662,20 @@ def fp_style_abacus_args() -> list[Argument]:
         Argument("k_points", list[int], optional=True, doc=doc_k_points),
     ]
 
+# rescuplus
+def fp_style_rescuplus_args() -> list[Argument]:
+    doc_fp_pp_path = "Directory of psuedo-potential or numerical orbital files to be used for 02.fp exists."
+    doc_fp_pp_files = "Psuedo-potential file to be used for 02.fp. Note that the order of elements should correspond to the order in type_map."
+    doc_fp_incar = "Input file for ABACUS. This is optinal but the priority is lower than user_fp_params, and you should not set user_fp_params if you want to use fp_incar."
+    doc_user_fp_params = "Set the key and value of INPUT."
+
+    return [
+        Argument("fp_pp_path", str, optional=False, doc=doc_fp_pp_path),
+        Argument("fp_pp_files", list[str], optional=False, doc=doc_fp_pp_files),
+        Argument("fp_incar", str, optional=True, doc=doc_fp_incar),
+        Argument("user_fp_params", dict, optional=True, doc=doc_user_fp_params),
+    ]
+
 
 # gaussian
 def fp_style_gaussian_args() -> list[Argument]:
@@ -946,6 +960,7 @@ def fp_style_variant_type_args() -> Variant:
             Argument("siesta", dict, fp_style_siesta_args()),
             Argument("cp2k", dict, fp_style_cp2k_args()),
             Argument("abacus", dict, fp_style_abacus_args()),
+            Argument("rescuplus", dict, fp_style_rescuplus_args()),
             Argument(
                 "amber/diff", dict, fp_style_amber_diff_args(), doc=doc_amber_diff
             ),
