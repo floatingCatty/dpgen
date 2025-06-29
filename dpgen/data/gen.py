@@ -246,9 +246,15 @@ def poscar_scale(poscar_in, poscar_out, scale):
 
 
 def poscar_scale_abacus(poscar_in, poscar_out, scale, jdata):
+    if2D = jdata["if2D"]
     stru = get_abacus_STRU(poscar_in)
-    stru["cells"] *= scale
-    stru["coords"] *= scale
+    if not if2D:
+        stru["cells"] *= scale
+        stru["coords"] *= scale
+    else:
+        stru["cells"][:2] = stru["cells"][:2] * scale # this assume the c vector is [0,0,c], and is orthogonal to a and b.
+        stru["coords"][:,:2] = stru["coords"][:,:2] * scale
+        
     pp_files = [os.path.basename(a) for a in jdata["potcars"]]
     orb_file_names = None
     dpks_descriptor_name = None

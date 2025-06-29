@@ -111,6 +111,7 @@ def init_bulk_jdata_arginfo() -> Argument:
         [
             Argument("stages", list[int], optional=False, doc=doc_stages),
             Argument("elements", list[str], optional=False, doc=doc_elements),
+            Argument("if2D", bool, optional=True, default=False, doc="If the system is 2D."),
             Argument("potcars", list[str], optional=True, doc=doc_potcars),
             Argument("cell_type", str, optional=True, doc=doc_cell_type),
             Argument("super_cell", list[int], optional=False, doc=doc_super_cell),
